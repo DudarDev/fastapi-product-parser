@@ -1,0 +1,20 @@
+# Байт-код Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Середовища
+.env
+venv/
+env/
+ENV/
+
+# Локальні налаштування IDE
+.vscode/
+.idea/
+
+# Дані MongoDB (ніколи не комітимо базу даних!)
+mongo_data/
+
+# Mac OS файли
+.DS_Store
