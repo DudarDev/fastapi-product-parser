@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from app.db.mongo import connect_to_mongo, close_mongo_connection
+from app.api.routes import router as api_router
 
 # Lifespan - це новий спосіб у FastAPI для керування подіями старту та зупинки
 @asynccontextmanager
@@ -27,3 +28,5 @@ async def root():
         "status": "ok",
         "message": "API парсера успішно працює! MongoDB підключена."
     }
+
+app.include_router(api_router)    
