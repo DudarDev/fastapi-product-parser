@@ -1,19 +1,18 @@
+import re
 from bs4 import BeautifulSoup
 from fastapi import HTTPException
 from playwright.async_api import async_playwright
 from app.parsers.base import BaseParser
-# Імпортуємо обидві моделі!
 from app.models.response import HotlineOfferInternal, OfferResponse
-import re
 
 class HotlineParser(BaseParser):
-    # Додаємо параметри з ТЗ в аргументи функції
     async def parse_offers(self, url: str, price_sort: str = None, count_limit: int = None) -> list[OfferResponse]:
-        
-        # Вимога ТЗ: чистий URL без префіксів мови та слешу в кінці
-        clean_url = url.replace("/ua/", "/").rstrip("/")
-        
+        clean_url = url.strip()
+        if clean_url.endswith("/"):
+            clean_url = clean_url[:-1]
+            
         internal_offers = []
+
         try:
             async with async_playwright() as p:
                 browser = await p.chromium.launch(
@@ -21,74 +20,122 @@ class HotlineParser(BaseParser):
                     args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
                 )
                 context = await browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36"
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                    viewport={"width": 1920, "height": 1080}
                 )
                 page = await context.new_page()
 
+                # Блокуємо тільки картинки і медіа для швидкості
                 await page.route("**/*", lambda route: route.abort() 
-                    if route.request.resource_type in ["image", "font", "media", "stylesheet"] 
+                    if route.request.resource_type in ["image", "media", "font"] 
                     else route.continue_())
 
-                # Використовуємо clean_url
-                await page.goto(clean_url, wait_until="domcontentloaded", timeout=60000)
-                await page.wait_for_timeout(2000)
+                print(f"⏳ Переходимо за адресою: {clean_url}", flush=True)
+                await page.goto(clean_url, wait_until="load", timeout=60000)
+                
+                # Скролимо, щоб підвантажити ліниві елементи
+                await page.evaluate("window.scrollBy(0, 1000)")
+                await page.wait_for_timeout(3000)
+                
                 html_content = await page.content()
                 await browser.close()
 
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Playwright error: {str(e)}")
+            print(f"❌ Помилка браузера: {e}", flush=True)
+            raise HTTPException(status_code=500, detail="Помилка при завантаженні сторінки")
 
         soup = BeautifulSoup(html_content, "lxml")
-        if "just a moment" in soup.text.lower() or "cloudflare" in soup.text.lower():
-            raise HTTPException(status_code=403, detail="Blocked by Cloudflare")
+        page_text = soup.text.lower()
+        title = soup.title.string if soup.title else "Без заголовка"
+        
+        print(f"🔍 Заголовок: '{title}'", flush=True)
+        
+        if "just a moment" in page_text or "cloudflare" in page_text or "перевірка" in page_text:
+            print("🛑 НАС ЗАБЛОКУВАВ CLOUDFLARE!", flush=True)
+            raise HTTPException(
+                status_code=429, 
+                detail="Too Many Requests: Cloudflare protection active."
+            )
 
-        title_elem = soup.select_one("h1.title__main, h1")
-        global_title = title_elem.text.strip() if title_elem else "Невідомий товар"
-        offer_blocks = soup.select(".list-body__item, .list-item, div[data-shop-id]")
+        # 🚀 НОВІ СЕЛЕКТОРИ З ТВОЇХ СКРІНШОТІВ (використовуємо стабільні атрибути)
+        offer_blocks = soup.select('div[offer-index], div[event-category="Pages Product Prices"]')
+        
+        # Якщо раптом атрибутів немає, шукаємо всі кнопки "Купити" і беремо їх батьківські блоки
+        if not offer_blocks:
+            buy_links = soup.select('a[href*="/go/price/"]')
+            for link in buy_links:
+                parent = link.parent
+                # Піднімаємося на кілька рівнів вгору, щоб захопити весь рядок магазину
+                for _ in range(4):
+                    if parent and parent.name == 'div' and len(parent.get_text(strip=True)) > 10:
+                        offer_blocks.append(parent)
+                        break
+                    if parent: parent = parent.parent
+
+        print(f"📦 Знайдено блоків з товарами: {len(offer_blocks)}", flush=True)
+
+        seen_shops = set()
 
         for block in offer_blocks:
             try:
-                price_elem = block.select_one(".price__value, .price-value")
-                if not price_elem: continue
-                price = float(re.sub(r'[^\d]', '', price_elem.text))
+                block_text = block.get_text(separator=" ", strip=True)
                 
-                shop_elem = block.select_one(".shop__title, .shop__name, a[data-tracking-id='shop-name']")
-                shop = shop_elem.get_text(strip=True) if shop_elem else "Магазин"
-                
-                link = block.select_one('a[href*="/go/price/"], a.btn--orange')
-                full_url = f"https://hotline.ua{link['href']}" if link and link['href'].startswith('/') else clean_url
-                is_used = "б/в" in block.get_text(separator=" ").lower()
+                # 1. Знаходимо URL
+                link = block.select_one('a[href*="/go/price/"]')
+                if not link: continue
+                full_url = f"https://hotline.ua{link['href']}" if link['href'].startswith('/') else link['href']
 
-                # Створюємо INTERNAL модель
-                internal_offer = HotlineOfferInternal(
-                    url=full_url,
-                    original_url=clean_url,
-                    title=global_title,
-                    shop=shop,
-                    price=price,
-                    is_used=is_used
-                )
-                internal_offers.append(internal_offer)
-            except:
+                # 2. Витягуємо ціну БУДЬ-ЗВІДКИ з тексту блоку за допомогою Regex (найбільш безвідмовний метод)
+                price_match = re.search(r'([\d\s]+)\s*[₴грн]', block_text, re.IGNORECASE)
+                if not price_match: continue
+                clean_price_str = re.sub(r'[^\d]', '', price_match.group(1))
+                if not clean_price_str: continue
+                price = float(clean_price_str)
+
+                # 3. Витягуємо назву магазину
+                shop = "Невідомий магазин"
+                img = block.select_one('img[alt]')
+                if img and img.get('alt'):
+                    shop = img['alt']
+                else:
+                    # Беремо перший текстовий елемент у блоці (це майже завжди назва магазину)
+                    strings = list(block.stripped_strings)
+                    if strings:
+                        shop = strings[0]
+                        if "Акція" in shop and len(strings) > 1:
+                            shop = strings[1] # Якщо перше слово "Акція", беремо наступне
+
+                shop = re.sub(r'(?i)Магазин\s*', '', shop).strip() or "Невідомий магазин"
+
+                # Фільтруємо дублікати
+                if shop in seen_shops and shop != "Невідомий магазин": continue
+                seen_shops.add(shop)
+
+                # 4. Стан
+                is_used = "б/в" in block_text.lower()
+
+                internal_offers.append(HotlineOfferInternal(
+                    url=full_url, original_url=clean_url, title=title,
+                    shop=shop, price=price, is_used=is_used
+                ))
+            except Exception as e:
                 continue
 
-        # Вимога ТЗ: Сортування (price_sort)
+        if not internal_offers:
+            print(f"⚠️ Офери не знайдені в HTML.", flush=True)
+            raise HTTPException(status_code=400, detail=f"Офери не знайдені. Дизайн не розпізнано.")
+
+        # Сортування
         if price_sort == "asc":
             internal_offers.sort(key=lambda x: x.price)
         elif price_sort == "desc":
             internal_offers.sort(key=lambda x: x.price, reverse=True)
 
-        # Вимога ТЗ: Ліміт кількості (count_limit)
-        if count_limit and count_limit > 0:
+        # Ліміт
+        if count_limit:
             internal_offers = internal_offers[:count_limit]
 
-        # Конвертуємо Internal модель в External (OfferResponse), як вимагає ТЗ
-        external_offers = [OfferResponse(**offer.model_dump()) for offer in internal_offers]
-
-        if not external_offers:
-            raise HTTPException(status_code=400, detail="Офери не знайдені")
-
-        return external_offers
+        return [OfferResponse(**offer.model_dump()) for offer in internal_offers]
 
     async def parse_comments(self, url: str, date_to: str | None = None) -> list:
-        return []
+        raise NotImplementedError("Тільки офери для Hotline")
