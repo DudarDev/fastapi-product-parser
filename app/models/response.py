@@ -1,29 +1,24 @@
 from pydantic import BaseModel, Field
-from datetime import datetime
+from typing import List, Optional
 
-# --- Офери (Hotline) ---
+# --- INTERNAL MODEL (Те, що ми парсимо з Hotline) ---
+class HotlineOfferInternal(BaseModel):
+    url: str
+    original_url: Optional[str] = None
+    title: str
+    shop: str
+    price: float
+    is_used: bool
 
+# --- EXTERNAL MODEL (Те, що вимагає ТЗ віддавати юзеру) ---
 class OfferResponse(BaseModel):
     url: str
-    original_url: str | None = None
-    title: str = ""
-    shop: str = ""
-    price: float = 0.0
-    is_used: bool = False
+    original_url: Optional[str] = None
+    title: str
+    shop: str
+    price: float
+    is_used: bool
 
 class ProductOffersResponse(BaseModel):
     url: str
-    offers: list[OfferResponse] = Field(default_factory=list)
-
-# --- Відгуки (Comfy, Brain) ---
-
-class CommentResponse(BaseModel):
-    rating: float | None = None
-    advantages: str | None = None
-    shortcomings: str | None = None
-    comment: str | None = None
-    created_at: datetime | None = None
-
-class ProductCommentsResponse(BaseModel):
-    url: str
-    comments: list[CommentResponse] = Field(default_factory=list)
+    offers: List[OfferResponse]

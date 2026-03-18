@@ -1,15 +1,17 @@
 import asyncio
+from datetime import datetime, timezone
 from fastapi import APIRouter, Query, HTTPException
 from typing import Literal
 
 from app.models.response import ProductOffersResponse
 from app.parsers.hotline import HotlineParser
 from app.utils.url_cleaner import clean_url
+from app.db.mongo import db_instance  # Імпортуємо нашу базу
 import httpx
 
 router = APIRouter(tags=["Products"])
 
-# Ініціалізуємо HTTP-клієнт, який будемо передавати в парсери
+# Ініціалізуємо HTTP-клієнт
 http_client = httpx.AsyncClient(timeout=10.0)
 
 @router.get("/product/offers", response_model=ProductOffersResponse)
@@ -36,11 +38,11 @@ async def get_product_offers(
             offers = await parser.parse_offers(cleaned_url)
             
     except TimeoutError:
-        # Завдання каже: "або нічого не віддаємо, або скільки встигли".
-        # У випадку з Hotline краще віддати 408 (Request Timeout), бо якщо API не відповів, то оферів 0.
         raise HTTPException(status_code=408, detail="Request Timeout: Парсер не встиг обробити запит")
+    except HTTPException as http_exc:
+        # Прокидаємо HTTP помилки (наприклад, 403 від Cloudflare) далі
+        raise http_exc
     except Exception as e:
-        # Мапінг непередбачуваних помилок у 500
         raise HTTPException(status_code=500, detail=str(e))
 
     # Логіка сортування
@@ -53,7 +55,19 @@ async def get_product_offers(
     if count_limit and count_limit > 0:
         offers = offers[:count_limit]
 
-    # TODO: Тут ми пізніше додамо збереження в MongoDB (await mongodb.db.offers.insert_one(...))
+    # ЗБЕРЕЖЕННЯ В MONGODB 💾
+    if offers:
+        try:
+            document = {
+                "product_url": cleaned_url,
+                "parsed_at": datetime.now(timezone.utc),
+                "offers_count": len(offers),
+                "offers": [offer.model_dump() for offer in offers]
+            }
+            # Асинхронно записуємо в колекцію "hotline_products"
+            await db_instance.db.hotline_products.insert_one(document)
+        except Exception as e:
+            print(f"Помилка запису в БД: {e}")
 
     return ProductOffersResponse(
         url=cleaned_url,

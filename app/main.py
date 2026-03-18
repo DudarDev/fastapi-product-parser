@@ -1,32 +1,23 @@
-from fastapi import FastAPI
 from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from app.api.routes import router
 from app.db.mongo import connect_to_mongo, close_mongo_connection
-from app.api.routes import router as api_router
 
-# Lifespan - це новий спосіб у FastAPI для керування подіями старту та зупинки
+# Lifespan - це сучасний метод FastAPI для виконання коду при старті та зупинці сервера
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Логіка, яка виконується при запуску сервера
+    # Виконується при запуску сервера
     await connect_to_mongo()
-    
-    yield # Тут сервер працює і приймає запити
-    
-    # Логіка, яка виконується при вимкненні сервера
+    yield
+    # Виконується при вимкненні сервера
     await close_mongo_connection()
 
-# Ініціалізація FastAPI
 app = FastAPI(
     title="Product Parser API",
-    description="Асинхронний сервіс для парсингу продуктів та відгуків (Hotline, Comfy, Brain)",
+    description="Асинхронний сервіс для парсингу продуктів",
     version="1.0.0",
     lifespan=lifespan
 )
 
-@app.get("/")
-async def root():
-    return {
-        "status": "ok",
-        "message": "API парсера успішно працює! MongoDB підключена."
-    }
-
-app.include_router(api_router)    
+# Підключаємо наші роути (ендпоінти)
+app.include_router(router)

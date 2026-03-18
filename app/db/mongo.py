@@ -1,29 +1,28 @@
+import os
 from motor.motor_asyncio import AsyncIOMotorClient
-from app.core.config import settings
-import logging
 
-logger = logging.getLogger(__name__)
+# Беремо налаштування з docker-compose.yml (або ставимо дефолтні)
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "parser_db")
 
-class Database:
-    """
-    Клас для зберігання глобального стану клієнта бази даних.
-    """
-    client: AsyncIOMotorClient | None = None
+class MongoDB:
+    client: AsyncIOMotorClient = None
     db = None
 
-# Глобальний об'єкт бази даних, який ми будемо імпортувати в інші модулі
-mongodb = Database()
+# Створюємо єдиний екземпляр бази для всього додатку
+db_instance = MongoDB()
 
 async def connect_to_mongo():
-    """Створює підключення до MongoDB."""
-    logger.info("Підключення до MongoDB...")
-    mongodb.client = AsyncIOMotorClient(settings.MONGO_URI)
-    mongodb.db = mongodb.client[settings.MONGO_DB_NAME]
-    logger.info("Успішно підключено до MongoDB!")
+    """Підключення до бази даних при старті сервера"""
+    try:
+        db_instance.client = AsyncIOMotorClient(MONGO_URI)
+        db_instance.db = db_instance.client[MONGO_DB_NAME]
+        print("✅ Успішно підключено до MongoDB!")
+    except Exception as e:
+        print(f"❌ Помилка підключення до MongoDB: {e}")
 
 async def close_mongo_connection():
-    """Закриває підключення до MongoDB."""
-    logger.info("Закриття підключення до MongoDB...")
-    if mongodb.client:
-        mongodb.client.close()
-    logger.info("Підключення закрито!")
+    """Відключення від бази даних при зупинці сервера"""
+    if db_instance.client:
+        db_instance.client.close()
+        print("🔌 Відключено від MongoDB.")
