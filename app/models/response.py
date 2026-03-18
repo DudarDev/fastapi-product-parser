@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
+from datetime import datetime
 
-# --- INTERNAL MODEL (Те, що ми парсимо з Hotline) ---
 class HotlineOfferInternal(BaseModel):
     url: str
     original_url: Optional[str] = None
@@ -10,7 +10,6 @@ class HotlineOfferInternal(BaseModel):
     price: float
     is_used: bool
 
-# --- EXTERNAL MODEL (Те, що вимагає ТЗ віддавати юзеру) ---
 class OfferResponse(BaseModel):
     url: str
     original_url: Optional[str] = None
@@ -22,3 +21,14 @@ class OfferResponse(BaseModel):
 class ProductOffersResponse(BaseModel):
     url: str
     offers: List[OfferResponse]
+
+class CommentResponse(BaseModel):
+    rating: Optional[float] = None
+    advantages: Optional[str] = None
+    shortcomings: Optional[str] = None
+    comment: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+class ProductCommentsResponse(BaseModel):
+    url: str
+    comments: List[CommentResponse] = Field(default_factory=list)

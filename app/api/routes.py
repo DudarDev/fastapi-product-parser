@@ -8,17 +8,12 @@ from app.parsers.hotline import HotlineParser
 from app.parsers.comfy import ComfyParser
 from app.parsers.brain import BrainParser
 from app.utils.url_cleaner import clean_url
-from app.db.mongo import mongodb
+from app.db.mongo import db_instance
 import httpx
 
 router = APIRouter(tags=["Products"])
-
-# Ініціалізуємо HTTP-клієнт
 http_client = httpx.AsyncClient(timeout=10.0)
 
-# ==========================================
-# 1. HOTLINE (ОФЕРИ)
-# ==========================================
 @router.get("/product/offers", response_model=ProductOffersResponse)
 async def get_product_offers(
     url: str = Query(..., description="URL сторінки товару на Hotline"),
@@ -32,7 +27,6 @@ async def get_product_offers(
 
     parser = HotlineParser(client=http_client)
     offers = []
-
     try:
         if timeout_limit:
             async with asyncio.timeout(timeout_limit):
@@ -46,7 +40,6 @@ async def get_product_offers(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Збереження в MongoDB
     if offers:
         try:
             document = {
@@ -55,16 +48,12 @@ async def get_product_offers(
                 "offers_count": len(offers),
                 "offers": [offer.model_dump() for offer in offers]
             }
-            await mongodb.db.hotline_products.insert_one(document)
+            await db_instance.db.hotline_products.insert_one(document)
         except Exception as e:
             print(f"Помилка запису в БД: {e}")
 
     return ProductOffersResponse(url=cleaned_url, offers=offers)
 
-
-# ==========================================
-# 2. COMFY ТА BRAIN (ВІДГУКИ)
-# ==========================================
 @router.get("/product/comments", response_model=ProductCommentsResponse)
 async def get_product_comments(
     url: str = Query(..., description="URL продукту (Comfy або Brain)"),
@@ -72,7 +61,6 @@ async def get_product_comments(
 ):
     cleaned_url = clean_url(url)
     
-    # Автоматичне визначення джерела по URL (Вимога ТЗ)
     if "comfy.ua" in cleaned_url:
         parser = ComfyParser(client=http_client)
         source = "comfy"
@@ -89,8 +77,7 @@ async def get_product_comments(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Збереження відгуків у MongoDB
-    if comments:
+    if comments or isinstance(comments, list):
         try:
             document = {
                 "product_url": cleaned_url,
@@ -99,7 +86,7 @@ async def get_product_comments(
                 "comments_count": len(comments),
                 "comments": [comment.model_dump() for comment in comments]
             }
-            await mongodb.db.product_comments.insert_one(document)
+            await db_instance.db.product_comments.insert_one(document)
         except Exception as e:
             print(f"Помилка запису в БД: {e}")
 

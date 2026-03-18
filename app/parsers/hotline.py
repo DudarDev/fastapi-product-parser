@@ -25,15 +25,15 @@ class HotlineParser(BaseParser):
                 )
                 page = await context.new_page()
 
-                # Блокуємо тільки картинки і медіа для швидкості
-                await page.route("**/*", lambda route: route.abort() 
-                    if route.request.resource_type in ["image", "media", "font"] 
-                    else route.continue_())
-
+                # Більше НЕ блокуємо ресурси. Дозволяємо Vue/React завантажити все, щоб уникнути зависань.
                 print(f"⏳ Переходимо за адресою: {clean_url}", flush=True)
-                await page.goto(clean_url, wait_until="load", timeout=60000)
                 
-                # Скролимо, щоб підвантажити ліниві елементи
+                # Чекаємо networkidle замість domcontentloaded
+                await page.goto(clean_url, wait_until="networkidle", timeout=60000)
+                
+                # Скролимо сторінку
+                await page.evaluate("window.scrollBy(0, 500)")
+                await page.wait_for_timeout(1000)
                 await page.evaluate("window.scrollBy(0, 1000)")
                 await page.wait_for_timeout(3000)
                 
@@ -48,70 +48,39 @@ class HotlineParser(BaseParser):
         page_text = soup.text.lower()
         title = soup.title.string if soup.title else "Без заголовка"
         
-        print(f"🔍 Заголовок: '{title}'", flush=True)
-        
         if "just a moment" in page_text or "cloudflare" in page_text or "перевірка" in page_text:
-            print("🛑 НАС ЗАБЛОКУВАВ CLOUDFLARE!", flush=True)
-            raise HTTPException(
-                status_code=429, 
-                detail="Too Many Requests: Cloudflare protection active."
-            )
+            raise HTTPException(status_code=429, detail="Too Many Requests: Cloudflare protection active.")
 
-        # 🚀 НОВІ СЕЛЕКТОРИ З ТВОЇХ СКРІНШОТІВ (використовуємо стабільні атрибути)
-        offer_blocks = soup.select('div[offer-index], div[event-category="Pages Product Prices"]')
-        
-        # Якщо раптом атрибутів немає, шукаємо всі кнопки "Купити" і беремо їх батьківські блоки
-        if not offer_blocks:
-            buy_links = soup.select('a[href*="/go/price/"]')
-            for link in buy_links:
-                parent = link.parent
-                # Піднімаємося на кілька рівнів вгору, щоб захопити весь рядок магазину
-                for _ in range(4):
-                    if parent and parent.name == 'div' and len(parent.get_text(strip=True)) > 10:
-                        offer_blocks.append(parent)
-                        break
-                    if parent: parent = parent.parent
-
-        print(f"📦 Знайдено блоків з товарами: {len(offer_blocks)}", flush=True)
-
+        buy_links = soup.select('a[href*="/go/price/"]')
         seen_shops = set()
 
-        for block in offer_blocks:
+        for link in buy_links:
             try:
-                block_text = block.get_text(separator=" ", strip=True)
+                parent = link
+                for _ in range(6):
+                    if parent.parent:
+                        parent = parent.parent
                 
-                # 1. Знаходимо URL
-                link = block.select_one('a[href*="/go/price/"]')
-                if not link: continue
+                block_text = parent.get_text(separator=" ", strip=True)
                 full_url = f"https://hotline.ua{link['href']}" if link['href'].startswith('/') else link['href']
 
-                # 2. Витягуємо ціну БУДЬ-ЗВІДКИ з тексту блоку за допомогою Regex (найбільш безвідмовний метод)
                 price_match = re.search(r'([\d\s]+)\s*[₴грн]', block_text, re.IGNORECASE)
                 if not price_match: continue
-                clean_price_str = re.sub(r'[^\d]', '', price_match.group(1))
-                if not clean_price_str: continue
-                price = float(clean_price_str)
+                price = float(re.sub(r'[^\d]', '', price_match.group(1)))
 
-                # 3. Витягуємо назву магазину
                 shop = "Невідомий магазин"
-                img = block.select_one('img[alt]')
+                img = parent.select_one('img[alt]')
                 if img and img.get('alt'):
                     shop = img['alt']
                 else:
-                    # Беремо перший текстовий елемент у блоці (це майже завжди назва магазину)
-                    strings = list(block.stripped_strings)
-                    if strings:
-                        shop = strings[0]
-                        if "Акція" in shop and len(strings) > 1:
-                            shop = strings[1] # Якщо перше слово "Акція", беремо наступне
+                    strings = list(parent.stripped_strings)
+                    if strings: shop = strings[0]
 
                 shop = re.sub(r'(?i)Магазин\s*', '', shop).strip() or "Невідомий магазин"
 
-                # Фільтруємо дублікати
                 if shop in seen_shops and shop != "Невідомий магазин": continue
                 seen_shops.add(shop)
 
-                # 4. Стан
                 is_used = "б/в" in block_text.lower()
 
                 internal_offers.append(HotlineOfferInternal(
@@ -122,16 +91,13 @@ class HotlineParser(BaseParser):
                 continue
 
         if not internal_offers:
-            print(f"⚠️ Офери не знайдені в HTML.", flush=True)
-            raise HTTPException(status_code=400, detail=f"Офери не знайдені. Дизайн не розпізнано.")
+            raise HTTPException(status_code=400, detail=f"Офери не знайдені. Бот побачив сторінку: {title}")
 
-        # Сортування
         if price_sort == "asc":
             internal_offers.sort(key=lambda x: x.price)
         elif price_sort == "desc":
             internal_offers.sort(key=lambda x: x.price, reverse=True)
 
-        # Ліміт
         if count_limit:
             internal_offers = internal_offers[:count_limit]
 
