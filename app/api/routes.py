@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Depends
 from typing import Literal
 
 from app.models.response import ProductOffersResponse, ProductCommentsResponse
@@ -8,7 +8,7 @@ from app.parsers.hotline import HotlineParser
 from app.parsers.comfy import ComfyParser
 from app.parsers.brain import BrainParser
 from app.utils.url_cleaner import clean_url
-from app.db.mongo import db_instance
+from app.db.mongo import get_db
 import httpx
 
 router = APIRouter(tags=["Products"])
@@ -19,7 +19,8 @@ async def get_product_offers(
     url: str = Query(..., description="URL сторінки товару на Hotline"),
     timeout_limit: float | None = Query(None, description="Ліміт часу (секунди)"),
     count_limit: int | None = Query(None, description="Кількість оферів для повернення"),
-    price_sort: Literal["asc", "desc"] | None = Query(None, description="Сортування за ціною")
+    price_sort: Literal["asc", "desc"] | None = Query(None, description="Сортування за ціною"),
+    db = Depends(get_db)  # <--- Dependency Injection
 ):
     cleaned_url = clean_url(url)
     if "hotline.ua" not in cleaned_url:
@@ -48,7 +49,7 @@ async def get_product_offers(
                 "offers_count": len(offers),
                 "offers": [offer.model_dump() for offer in offers]
             }
-            await db_instance.db.hotline_products.insert_one(document)
+            await db.hotline_products.insert_one(document)  # <--- Запис через інжектовану БД
         except Exception as e:
             print(f"Помилка запису в БД: {e}")
 
@@ -57,7 +58,8 @@ async def get_product_offers(
 @router.get("/product/comments", response_model=ProductCommentsResponse)
 async def get_product_comments(
     url: str = Query(..., description="URL продукту (Comfy або Brain)"),
-    date_to: str | None = Query(None, description="До якої дати парсити відгуки (YYYY-MM-DD)")
+    date_to: str | None = Query(None, description="До якої дати парсити відгуки (YYYY-MM-DD)"),
+    db = Depends(get_db)  # <--- Dependency Injection
 ):
     cleaned_url = clean_url(url)
     
@@ -86,7 +88,7 @@ async def get_product_comments(
                 "comments_count": len(comments),
                 "comments": [comment.model_dump() for comment in comments]
             }
-            await db_instance.db.product_comments.insert_one(document)
+            await db.product_comments.insert_one(document)  # <--- Запис через інжектовану БД
         except Exception as e:
             print(f"Помилка запису в БД: {e}")
 

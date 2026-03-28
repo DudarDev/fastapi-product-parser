@@ -11,8 +11,6 @@ httpx>=0.26.0
 beautifulsoup4>=4.12.0
 lxml>=5.1.0
 
-# Браузерний парсер
-playwright>=1.41.0
 
 # Асинхронний драйвер для MongoDB
 motor>=3.3.2

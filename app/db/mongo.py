@@ -26,3 +26,11 @@ async def close_mongo_connection():
     if db_instance.client:
         db_instance.client.close()
         print("🔌 Відключено від MongoDB.")
+
+        # ДОДАЄМО ЦЮ ФУНКЦІЮ ДЛЯ DEPENDENCY INJECTION:
+async def get_db():
+    """
+    Генератор, який видає об'єкт бази даних для кожного запиту.
+    Це дозволяє легко підміняти базу на тестову (Mock) при написанні Unit-тестів.
+    """
+    yield db_instance.db

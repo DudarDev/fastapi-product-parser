@@ -14,8 +14,8 @@ COPY requirements.txt .
 # Встановлюємо Python-залежності
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Встановлюємо Playwright та системні залежності для браузера (Chromium)
-RUN playwright install --with-deps chromium
-
 # Копіюємо весь код проєкту в контейнер
 COPY . .
+
+# Якщо в тебе є команда для запуску, вона зазвичай виглядає так:
+# CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
