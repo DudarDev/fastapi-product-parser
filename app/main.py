@@ -11,6 +11,8 @@ async def lifespan(app: FastAPI):
     yield
     # Виконується при вимкненні сервера
     await close_mongo_connection()
+    from app.api.routes import http_client
+    await http_client.aclose()
 
 app = FastAPI(
     title="Product Parser API",

@@ -86,12 +86,16 @@ class HotlineParser(BaseParser):
 
                 for link in buy_links:
                     try:
-                        parent = link
-                        for _ in range(6):
-                            if parent.parent:
-                                parent = parent.parent
+                        # Знаходимо відповідний контейнер рядка оферу
+                        container = link.find_parent(class_=re.compile(r'offer|price__item|line|row|product-item', re.IGNORECASE))
+                        if not container:
+                            parent = link
+                            for _ in range(6):
+                                if parent.parent and parent.parent.name not in ["body", "html"]:
+                                    parent = parent.parent
+                            container = parent
                         
-                        block_text = parent.get_text(separator=" ", strip=True)
+                        block_text = container.get_text(separator=" ", strip=True)
                         full_url = f"https://hotline.ua{link['href']}" if link['href'].startswith('/') else link['href']
 
                         price_match = re.search(r'([\d\s]+)\s*[₴грн]', block_text, re.IGNORECASE)
@@ -99,11 +103,11 @@ class HotlineParser(BaseParser):
                         price = float(re.sub(r'[^\d]', '', price_match.group(1)))
 
                         shop = "Невідомий магазин"
-                        img = parent.select_one('img[alt]')
+                        img = container.select_one('img[alt]')
                         if img and img.get('alt'):
                             shop = img['alt']
                         else:
-                            strings = list(parent.stripped_strings)
+                            strings = list(container.stripped_strings)
                             if strings: shop = strings[0]
 
                         shop = re.sub(r'(?i)Магазин\s*', '', shop).strip() or "Невідомий магазин"

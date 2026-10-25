@@ -1,8 +1,9 @@
 import httpx
 import re
+import json
 from bs4 import BeautifulSoup
 from fastapi import HTTPException
-from datetime import datetime
+from datetime import datetime, timezone
 from app.parsers.base import BaseParser
 from app.models.response import CommentResponse
 
@@ -34,24 +35,63 @@ class ComfyParser(BaseParser):
         soup = BeautifulSoup(response.text, "lxml")
 
         # =================================================================
-        # ІДЕАЛЬНИЙ СЦЕНАРІЙ (API): Шукаємо data-product-id і стукаємо в API
+        # ЕТАП 1: SEO JSON-LD СЦЕНАРІЙ (application/ld+json)
+        # Оскільки Comfy - це SPA, відгуки для пошуковиків часто є в JSON-LD
         # =================================================================
-        # Зазвичай Comfy ховає ID товару в атрибутах
-        product_id_match = re.search(r'data-product-id="(\d+)"', response.text)
-        if product_id_match:
-            product_id = product_id_match.group(1)
-            api_url = f"https://comfy.ua/api/v1/reviews/product/{product_id}" # Приклад їхнього API
+        json_ld_scripts = soup.find_all("script", type="application/ld+json")
+        for script in json_ld_scripts:
+            if not script.string:
+                continue
             try:
-                api_response = await self.client.get(api_url, headers=headers, timeout=5.0)
-                if api_response.status_code == 200:
-                    data = api_response.json()
-                    # Тут би ми парсили JSON (залежить від точної структури Comfy API)
-                    pass 
+                ld_data = json.loads(script.string)
+                items = ld_data if isinstance(ld_data, list) else [ld_data]
+                for item in items:
+                    reviews = item.get("review", [])
+                    if isinstance(reviews, dict):
+                        reviews = [reviews]
+                    for rev in reviews:
+                        review_body = rev.get("reviewBody") or rev.get("description")
+                        if not review_body:
+                            continue
+                        
+                        rating_val = None
+                        if "reviewRating" in rev and isinstance(rev["reviewRating"], dict):
+                            raw_rating = rev["reviewRating"].get("ratingValue")
+                            if raw_rating is not None:
+                                try:
+                                    rating_val = float(raw_rating)
+                                except (ValueError, TypeError):
+                                    pass
+
+                        rev_datetime = datetime.now(timezone.utc)
+                        pub_date = rev.get("datePublished")
+                        if pub_date:
+                            for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%d.%m.%Y"):
+                                try:
+                                    rev_datetime = datetime.strptime(str(pub_date).split("T")[0], "%Y-%m-%d")
+                                    break
+                                except ValueError:
+                                    pass
+
+                        if limit_date and rev_datetime < limit_date:
+                            continue
+
+                        comments_data.append(CommentResponse(
+                            rating=rating_val,
+                            advantages=None,
+                            shortcomings=None,
+                            comment=review_body.strip(),
+                            created_at=rev_datetime
+                        ))
             except Exception:
-                pass # Якщо API не спрацювало, просто йдемо далі до HTML парсингу
+                continue
+
+        # Якщо JSON-LD вже дав результати, повертаємо їх
+        if comments_data:
+            return comments_data
 
         # =================================================================
-        # FALLBACK СЦЕНАРІЙ (HTML парсинг)
+        # ЕТАП 2: FALLBACK СЦЕНАРІЙ (HTML парсинг)
         # =================================================================
         review_blocks = soup.select(".review-item, .feedback__item, .js-review-item, div[itemprop='review']")
 
@@ -63,7 +103,7 @@ class ComfyParser(BaseParser):
                 
                 # Спроба розпарсити дату відгуку (формати бувають різні: "25 жовтня 2023", "25.10.2023")
                 # Для прикладу реалізуємо парсинг формату DD.MM.YYYY
-                review_date = datetime.utcnow() # За замовчуванням ставимо поточну
+                review_date = datetime.now(timezone.utc) # За замовчуванням ставимо поточну
                 date_match = re.search(r'(\d{2})\.(\d{2})\.(\d{4})', date_str)
                 if date_match:
                     day, month, year = date_match.groups()

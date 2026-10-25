@@ -2,7 +2,7 @@ import httpx
 import re
 from bs4 import BeautifulSoup
 from fastapi import HTTPException
-from datetime import datetime
+from datetime import datetime, timezone
 from app.parsers.base import BaseParser
 from app.models.response import CommentResponse
 
@@ -38,7 +38,7 @@ class BrainParser(BaseParser):
                 date_elem = block.select_one(".date, .comment-date")
                 date_str = date_elem.get_text(strip=True) if date_elem else ""
                 
-                review_date = datetime.utcnow()
+                review_date = datetime.now(timezone.utc)
                 # Приклад регулярки для пошуку дати (DD.MM.YYYY)
                 date_match = re.search(r'(\d{2})\.(\d{2})\.(\d{4})', date_str)
                 if date_match:

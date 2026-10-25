@@ -41,7 +41,7 @@ async def get_product_offers(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    if offers:
+    if offers and db is not None:
         try:
             document = {
                 "product_url": cleaned_url,
@@ -79,7 +79,7 @@ async def get_product_comments(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    if comments or isinstance(comments, list):
+    if (comments or isinstance(comments, list)) and db is not None:
         try:
             document = {
                 "product_url": cleaned_url,
